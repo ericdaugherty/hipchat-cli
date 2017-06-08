@@ -2,23 +2,19 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
+	"github.com/jessevdk/go-flags"
 	"github.com/tbruyelle/hipchat-go/hipchat"
 	"html/template"
 	"io/ioutil"
 	"log"
+	"os"
 )
 
 const defaultTemplate = `
-<strong>{{.Host}}</strong><br/>
-<strong>{{.Message}}</strong><br/>
+<strong>{{.host}}</strong><br/>
+<strong>{{.message}}</strong><br/>
 `
-
-var token string
-var room string
-var message string
-var templatePath string
 
 type logWriter struct{}
 
@@ -26,42 +22,46 @@ func (writer logWriter) Write(bytes []byte) (int, error) {
 	return fmt.Print(string(bytes))
 }
 
+type Options struct {
+	Token        string            `short:"t" long:"token" description:"HiptChat V2 API Token" required:"true"`
+	Room         string            `short:"r" long:"room" description:"The HipChat room name" required:"true"`
+	Data         map[string]string `short:"p" long:"param" description:"A key-value pair to use to fill the template. -p name:value"`
+	TemplatePath string            `long:"template" description:"Template File to use in place of default"`
+	Color        string            `short:"c" long:"color" description:"The color to use to display the notifcation" choice:"yellow" choice:"green" choice:"red" choice:"purple" choice:"gray" choice:"random"`
+	Notify       bool              `short:"n" long:"notify" description:"If present, the message will trigger a HipChat user notification."`
+}
+
+var options Options
+
+var parser = flags.NewParser(&options, flags.Default)
+
 func init() {
 	log.SetFlags(0)
 	log.SetOutput(logWriter{})
-
-	flag.StringVar(&token, "token", "", "HiptChat V2 API Token")
-	flag.StringVar(&room, "room", "", "The HipChat room name")
-	flag.StringVar(&message, "message", "", "The notification to send to HipChat")
-	flag.StringVar(&templatePath, "template", "", "Template File to use in place of default")
-	flag.Parse()
 }
 
 func main() {
-	// Validate the input.
-	invalid := false
-	if token == "" {
-		invalid = true
-		fmt.Println("You must specify a token.")
-	}
-	if room == "" {
-		invalid = true
-		fmt.Println("You must specify a room name.")
-	}
-	if message == "" {
-		invalid = true
-		fmt.Println("You must specify a message.")
-	}
-	if invalid {
-		flag.Usage()
-		return
+
+	if _, err := parser.Parse(); err != nil {
+		if flagsErr, ok := err.(*flags.Error); ok && flagsErr.Type == flags.ErrHelp {
+			os.Exit(0)
+		} else {
+			os.Exit(1)
+		}
 	}
 
-	client := hipchat.NewClient(token)
+	fmt.Println("Option Notify", options.Notify)
 
-	notifReq := &hipchat.NotificationRequest{Message: formatMessage(), MessageFormat: "html"}
+	client := hipchat.NewClient(options.Token)
 
-	resp, err := client.Room.Notification(room, notifReq)
+	notifReq := &hipchat.NotificationRequest{
+		Message:       formatMessage(),
+		MessageFormat: "html",
+		Color:         parseColor(),
+		Notify:        options.Notify,
+	}
+
+	resp, err := client.Room.Notification(options.Room, notifReq)
 	if err != nil {
 		body, _ := ioutil.ReadAll(resp.Body)
 		fmt.Println("Error sending notification.", err)
@@ -76,8 +76,8 @@ func formatMessage() string {
 	var t *template.Template
 	var err error
 
-	if templatePath != "" {
-		t, err = template.ParseFiles(templatePath)
+	if options.TemplatePath != "" {
+		t, err = template.ParseFiles(options.TemplatePath)
 		if err != nil {
 			log.Fatalln("Unable to parse the specified template file.", err)
 		}
@@ -88,15 +88,30 @@ func formatMessage() string {
 		}
 	}
 
-	data := make(map[string]string)
-	data["Host"] = "www.nba.com"
-	data["Message"] = "Yo dawg, your server be down"
-
 	out := new(bytes.Buffer)
-	err = t.Execute(out, data)
+	err = t.Execute(out, options.Data)
 	if err != nil {
 		log.Fatalln("Unable to execute the message template.", err)
 	}
 
 	return out.String()
+}
+
+func parseColor() hipchat.Color {
+	switch options.Color {
+	case "yellow":
+		return hipchat.ColorYellow
+	case "green":
+		return hipchat.ColorGreen
+	case "red":
+		return hipchat.ColorRed
+	case "purple":
+		return hipchat.ColorPurple
+	case "gray":
+		return hipchat.ColorGray
+	case "random":
+		return hipchat.ColorRandom
+	default:
+		return hipchat.ColorYellow
+	}
 }
