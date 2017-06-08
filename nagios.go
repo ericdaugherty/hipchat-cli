@@ -12,8 +12,14 @@ import (
 )
 
 const defaultTemplate = `
-<strong>{{.host}}</strong><br/>
-<strong>{{.message}}</strong><br/>
+{{.message}}
+`
+
+const nagiosDefaultTemplate = `
+<strong>Nagios Notification</strong><br/>
+Host: {{.host}}<br/>
+Status: <b>{{.status}}</b><br/>
+{{.message}}
 `
 
 type logWriter struct{}
@@ -23,12 +29,15 @@ func (writer logWriter) Write(bytes []byte) (int, error) {
 }
 
 type Options struct {
-	Token        string            `short:"t" long:"token" description:"HiptChat V2 API Token" required:"true"`
-	Room         string            `short:"r" long:"room" description:"The HipChat room name" required:"true"`
-	Data         map[string]string `short:"p" long:"param" description:"A key-value pair to use to fill the template. -p name:value"`
-	TemplatePath string            `long:"template" description:"Template File to use in place of default"`
-	Color        string            `short:"c" long:"color" description:"The color to use to display the notifcation" choice:"yellow" choice:"green" choice:"red" choice:"purple" choice:"gray" choice:"random"`
-	Notify       bool              `short:"n" long:"notify" description:"If present, the message will trigger a HipChat user notification."`
+	Token          string            `short:"t" long:"token" description:"HiptChat V2 API Token" required:"true"`
+	Room           string            `short:"r" long:"room" description:"The HipChat room name" required:"true"`
+	Message        string            `short:"m" long:"message" description:"The Message body to send. Available in custom templates as {{.message}}"`
+	Data           map[string]string `short:"p" long:"param" description:"A key-value pair to use to fill the template. -p name:value Available in custom templates as {{.name}}"`
+	TemplatePath   string            `long:"template-file" description:"Template file to use in place of the default template."`
+	TemplateString string            `long:"template-body" description:"Template definition to use in place of the default template."`
+	Color          string            `short:"c" long:"color" description:"The color to use to display the notifcation" choice:"yellow" choice:"green" choice:"red" choice:"purple" choice:"gray" choice:"random"`
+	Notify         bool              `short:"n" long:"notify" description:"If present, the message will trigger a HipChat user notification."`
+	Nagios         bool              `long:"nagios" description:"If present, the default Nagios template is used."`
 }
 
 var options Options
@@ -49,8 +58,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-
-	fmt.Println("Option Notify", options.Notify)
 
 	client := hipchat.NewClient(options.Token)
 
@@ -73,6 +80,11 @@ func main() {
 
 func formatMessage() string {
 
+	// If the user specified a message, add it to the data unless it already has a value.
+	if _, ok := options.Data["message"]; !ok && options.Message != "" {
+		options.Data["message"] = options.Message
+	}
+
 	var t *template.Template
 	var err error
 
@@ -81,10 +93,20 @@ func formatMessage() string {
 		if err != nil {
 			log.Fatalln("Unable to parse the specified template file.", err)
 		}
+	} else if options.TemplateString != "" {
+		t, err = template.New("m").Parse(options.TemplateString)
+		if err != nil {
+			log.Fatalln("Unable to parse the specified template text.", err)
+		}
+	} else if options.Nagios {
+		t, err = template.New("m").Parse(nagiosDefaultTemplate)
+		if err != nil {
+			log.Fatalln("Unable to parse the nagios default template.", err)
+		}
 	} else {
 		t, err = template.New("m").Parse(defaultTemplate)
 		if err != nil {
-			log.Fatalln("Unable to parse the message template.", err)
+			log.Fatalln("Unable to parse the default template.", err)
 		}
 	}
 
